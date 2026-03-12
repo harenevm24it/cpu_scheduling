@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPU Scheduling Simulator</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
+body{
+    background:linear-gradient(135deg,#0f172a,#1e293b,#334155);
+    color:#fff;
+    padding:20px;
+}
+.container{
+    max-width:1000px;
+    margin:auto;
+    background:rgba(255,255,255,0.08);
+    padding:25px;
+    border-radius:18px;
+}
+h1,h2{text-align:center;margin-bottom:20px}
+.section{
+    background:rgba(255,255,255,0.05);
+    padding:18px;
+    border-radius:14px;
+    margin-bottom:20px;
+}
+.form-grid,.process-fields,.metrics{
+    display:grid;
+    gap:12px;
+}
+.form-grid{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.process-fields,.metrics{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.field{display:flex;flex-direction:column;gap:6px}
+label{font-size:14px;color:#cbd5e1}
+input,select,button{
+    padding:10px;
+    border:none;
+    border-radius:10px;
+}
+input,select{background:#fff;color:#111}
+button{
+    background:#38bdf8;
+    color:#fff;
+    font-weight:bold;
+    cursor:pointer;
+    margin-right:10px;
+}
+button:hover{opacity:0.9}
+.process-card,.calc-box,.metric-card,.execution-order,.gantt-wrapper{
+    background:rgba(255,255,255,0.06);
+    padding:14px;
+    border-radius:12px;
+    margin-top:14px;
+}
+table{
+    width:100%;
+    border-collapse:collapse;
+    background:#fff;
+    color:#111;
+    margin-top:15px;
+}
+th,td{
+    border:1px solid #ddd;
+    padding:10px;
+    text-align:center;
+}
+th{background:#0f172a;color:#fff}
+#gantt{margin-top:15px}
+.gantt-wrapper{
+    display:flex;
+    gap:4px;
+    overflow-x:auto;
+}
+.block{
+    min-width:70px;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    color:#111;
+}
+.block span{display:block;font-size:12px;margin-top:4px}
+.metric-card p{font-size:22px;font-weight:bold}
+.note{margin-top:8px;font-size:13px;color:#cbd5e1}
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>CPU Scheduling Simulator</h1>
+
+    <div class="section">
+        <div class="form-grid">
+            <div class="field">
+                <label>Algorithm</label>
+                <select id="algo" onchange="updateInputs()">
+                    <option value="FCFS">FCFS</option>
+                    <option value="SJF">SJF (Non-Preemptive)</option>
+                    <option value="SRTF">SJF (Preemptive)</option>
+                    <option value="PRIORITY">Priority (Non-Preemptive)</option>
+                    <option value="PPRIORITY">Priority (Preemptive)</option>
+                    <option value="RR">Round Robin</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>Time Quantum</label>
+                <input type="number" id="tq" value="2">
+            </div>
+            <div class="field">
+                <label>No. of Processes</label>
+                <input type="number" id="n" placeholder="Enter number">
+            </div>
+        </div>
+        <br>
+        <button onclick="create()">Create</button>
+        <button onclick="simulate()">Simulate</button>
+    </div>
+
+    <div id="inputs" class="section"></div>
+    <div id="output" class="section"></div>
+
+    <div class="section">
+        <h2>Gantt Chart</h2>
+        <div id="gantt"></div>
+    </div>
+</div>
+
+<script>
+function create(){
+    let n = +document.getElementById("n").value;
+    let algo = document.getElementById("algo").value;
+    let div = document.getElementById("inputs");
+    div.innerHTML = "";
+    if(n<=0){ div.innerHTML = `<p class="note">Enter process count first.</p>`; return; }
+
+    for(let i=0;i<n;i++){
+        let pr = (algo=="PRIORITY"||algo=="PPRIORITY") ? `
+        <div class="field">
+            <label>Priority</label>
+            <input id="pr${i}" type="number">
+        </div>` : "";
+
+        div.innerHTML += `
+        <div class="process-card">
+            <h3>P${i+1}</h3>
+            <div class="process-fields">
+                <div class="field"><label>Arrival Time</label><input id="at${i}" type="number"></div>
+                <div class="field"><label>Burst Time</label><input id="bt${i}" type="number"></div>
+                ${pr}
+            </div>
+        </div>`;
+    }
+}
+
+function updateInputs(){
+    if(+document.getElementById("n").value>0) create();
+}
+
+function simulate(){
+    let n = +document.getElementById("n").value;
+    let algo = document.getElementById("algo").value;
+    let tq = +document.getElementById("tq").value;
+    if(n<=0) return alert("Enter number of processes");
+
+    let p = [];
+    for(let i=0;i<n;i++){
+        let at = +document.getElementById("at"+i).value;
+        let bt = +document.getElementById("bt"+i).value;
+        let pr = 0;
+        if(at<0 || bt<=0 || isNaN(at) || isNaN(bt)) return alert("Enter valid AT and BT");
+        if(algo=="PRIORITY" || algo=="PPRIORITY"){
+            pr = +document.getElementById("pr"+i).value;
+            if(pr<0 || isNaN(pr)) return alert("Enter valid Priority");
+        }
+        p.push({id:"P"+(i+1),idx:i,at,bt,rt:bt,pr,ct:0,st:-1});
+    }
+
+    let time=0, completed=0, gantt=[], order=[];
+    while(completed<n){
+        let ready = p.filter(x=>x.at<=time && x.rt>0);
+        if(!ready.length){ time++; continue; }
+
+        let cur;
+        if(algo=="FCFS") cur = ready.sort((a,b)=>(a.at-b.at)||(a.idx-b.idx))[0];
+        else if(algo=="SJF") cur = ready.sort((a,b)=>a.bt-b.bt)[0];
+        else if(algo=="SRTF") cur = ready.sort((a,b)=>a.rt-b.rt)[0];
+        else if(algo=="PRIORITY" || algo=="PPRIORITY") cur = ready.sort((a,b)=>a.pr-b.pr)[0];
+        else cur = ready[0];
+
+        if(cur.st==-1) cur.st=time;
+        let exec = (algo=="RR") ? Math.min(tq,cur.rt) : ((algo=="SRTF"||algo=="PPRIORITY") ? 1 : cur.rt);
+
+        gantt.push({id:cur.id,len:exec,start:time,end:time+exec});
+        order.push(cur.id);
+        cur.rt -= exec;
+        time += exec;
+
+        if(cur.rt==0){ cur.ct=time; completed++; }
+    }
+
+    let awt=0, atat=0;
+    let out = `<h2>Simulation Results</h2>
+    <div class="execution-order"><b>Order:</b> ${order.join(" → ")}</div>
+    <table>
+    <tr><th>Process</th><th>AT</th><th>BT</th><th>ST</th><th>CT</th><th>WT</th><th>TAT</th></tr>`;
+
+    p.forEach(x=>{
+        let tat=x.ct-x.at, wt=tat-x.bt;
+        awt+=wt; atat+=tat;
+        out += `<tr><td>${x.id}</td><td>${x.at}</td><td>${x.bt}</td><td>${x.st}</td><td>${x.ct}</td><td>${wt}</td><td>${tat}</td></tr>`;
+    });
+
+    out += `</table><div class="calc-box"><h3>Detailed Calculations</h3>`;
+    p.forEach(x=>{
+        let tat=x.ct-x.at, wt=tat-x.bt;
+        out += `<p><b>${x.id}</b>: TAT = ${x.ct} - ${x.at} = ${tat}, WT = ${tat} - ${x.bt} = ${wt}</p>`;
+    });
+    out += `</div>
+    <div class="metrics">
+        <div class="metric-card"><h3>Average Waiting Time</h3><p>${(awt/n).toFixed(2)}</p></div>
+        <div class="metric-card"><h3>Average Turnaround Time</h3><p>${(atat/n).toFixed(2)}</p></div>
+    </div>`;
+
+    document.getElementById("output").innerHTML = out;
+
+    let colors=["#7dd3fc","#86efac","#f9a8d4","#fcd34d","#c4b5fd","#fdba74"];
+    let g = `<div class="gantt-wrapper">`;
+    gantt.forEach((x,i)=>{
+        g += `<div class="block" style="flex:${x.len};background:${colors[i%colors.length]}">
+                ${x.id}<span>${x.start}-${x.end}</span>
+              </div>`;
+    });
+    g += `</div><p class="note">Each block shows process execution time.</p>`;
+    document.getElementById("gantt").innerHTML = g;
+}
+</script>
+</body>
+</html>
